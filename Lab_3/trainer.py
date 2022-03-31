@@ -2,6 +2,10 @@ import numpy as np
 from copy import deepcopy
 
 from metrics import multiclass_accuracy
+from layers import softmax, cross_entropy_loss, softmax_with_cross_entropy
+
+import cupy as cp
+from tqdm.notebook import tqdm
 
 
 class Dataset:
@@ -68,7 +72,9 @@ class Trainer:
         
         for batch_indices in batches_indices:
             batch_X = X[batch_indices]
-            pred_batch = self.model.predict(batch_X)
+            batch_X_gpu = cp.asarray(batch_X)
+
+            pred_batch = self.model.predict(batch_X_gpu)
             pred[batch_indices] = pred_batch
 
         return multiclass_accuracy(pred, y)
@@ -93,12 +99,27 @@ class Trainer:
             batches_indices = np.array_split(shuffled_indices, sections)
 
             batch_losses = []
-
-            for batch_indices in batches_indices:
+            correct = 0
+            for batch_indices in tqdm(batches_indices):
                 batch_X = self.dataset.train_X[batch_indices]
                 batch_y = self.dataset.train_y[batch_indices]
+                
+                batch_X_gpu = cp.asarray(batch_X)
 
-                loss = self.model.compute_loss_and_gradients(batch_X, batch_y)
+                # loss = self.model.compute_loss_and_gradients(batch_X, batch_y)
+                
+                for param in self.model.params().values():
+                    param.grad = 0
+                    
+                out = self.model.forward(batch_X_gpu)
+
+                loss, grad = softmax_with_cross_entropy(out, batch_y)
+
+                self.model.backward(grad)
+                
+                prediction = cp.argmax(out, axis=1).get()
+                correct += np.sum(prediction == batch_y)
+                
                 
                 for param_name, param in self.model.params().items():
                     optimizer = self.optimizers[param_name]
@@ -110,14 +131,18 @@ class Trainer:
             
             ave_loss = np.mean(batch_losses)
             
-            train_accuracy = self.compute_accuracy(self.dataset.train_X,
-                                                   self.dataset.train_y)
+            val_loss = -1 #cross_entropy_loss(softmax(self.model.forward(self.dataset.val_X)), self.dataset.val_y)
+            
+            # train_accuracy = self.compute_accuracy(self.dataset.train_X,
+            #                                        self.dataset.train_y)
+            train_accuracy = correct/len(self.dataset.train_X)
 
             val_accuracy = self.compute_accuracy(self.dataset.val_X,
                                                  self.dataset.val_y)
 
-            print("Loss: %f, Train accuracy: %f, val accuracy: %f" % 
-                  (batch_losses[-1], train_accuracy, val_accuracy))
+            # print("Loss: %f, Train accuracy: %f, val accuracy: %f" % 
+            #       (batch_losses[-1], train_accuracy, val_accuracy))
+            print(f'Epoch {epoch+1}  Train loss: {batch_losses[-1]:.5f}, Train accuracy: {train_accuracy:.5f}, Val loss: {val_loss:.5f}, val accuracy: {val_accuracy:.5f}')
 
             loss_history.append(ave_loss)
             train_acc_history.append(train_accuracy)
