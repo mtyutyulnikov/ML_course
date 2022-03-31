@@ -1,6 +1,5 @@
 import numpy as np
 
-
 def l2_regularization(W, reg_strength):
     '''
     Computes L2 regularization loss on weights and its gradient
@@ -33,13 +32,14 @@ def softmax(predictions):
 
     # TODO implement softmax
     if len(predictions.shape) == 2:
+        # print('asd')
         s = np.max(predictions, axis=1)
         e_x = np.exp(predictions - s[:, np.newaxis])
         div = np.sum(e_x, axis=1)
         return e_x / div[:, np.newaxis]
-
-    exps = np.exp(predictions - np.max(predictions))
-    return exps / np.sum(exps)
+    else:
+        exps = np.exp(predictions - np.max(predictions))
+        return exps / np.sum(exps)
 
 
 def cross_entropy_loss(probs, target_index):
@@ -91,6 +91,9 @@ def softmax_with_cross_entropy(preds, target_index):
         index = index.reshape(-1, 1)
 
     prob = softmax(preds.copy())
+    if np.isnan(prob).sum() > 0:
+        print(prob.shape, 'prob')
+        
     loss = cross_entropy_loss(prob, index)
 
     y = np.zeros_like(preds)
@@ -100,10 +103,16 @@ def softmax_with_cross_entropy(preds, target_index):
     else:
         y[range(y.shape[0]), index[:, 0]] = 1
 
+    
     dprediction = prob - 1 * y
-
+    if np.isnan(dprediction).sum() > 0:
+        print(dprediction.shape, 'grad1')
+        
     if preds.ndim == 2:
         dprediction = dprediction / preds.shape[0]
+    
+    if np.isnan(dprediction).sum() > 0:
+        print(dprediction.shape, 'grad2')
     return loss, dprediction
 
 
@@ -120,12 +129,15 @@ class Param:
 
 class ReLULayer:
     def __init__(self):
+        self.name = 'relu'
         pass
 
     def forward(self, X):
         # TODO: Implement forward pass
         # Hint: you'll need to save some information about X
         # to use it later in the backward pass
+        # print(X)
+        
         self.indexes = X < 0
         result = X.copy()
         result[self.indexes] = 0
@@ -161,13 +173,17 @@ class FullyConnectedLayer:
         self.W = Param(0.001 * np.random.randn(n_input, n_output))
         self.B = Param(0.001 * np.random.randn(1, n_output))
         self.X = None
+        self.name = 'FC'
 
     def forward(self, X):
         # TODO: Implement forward pass
         # Your final implementation shouldn't have any loops
         # raise Exception("Not implemented!")
         self.X = X
-        return np.dot(X, self.W.value) + self.B.value
+        
+        res = np.dot(X, self.W.value) + self.B.value
+        
+        return res
 
     def backward(self, d_out):
         """
@@ -220,22 +236,24 @@ class ConvolutionalLayer:
         self.out_channels = out_channels
         self.W = Param(
             np.random.randn(filter_size, filter_size,
-                            in_channels, out_channels)
+                            in_channels, 
+                            out_channels)
         )
 
         self.B = Param(np.zeros(out_channels))
 
         self.padding = padding
         self.stride = stride
+        self.name = 'conv'
 
     def forward(self, X):
         batch_size, height, width, channels = X.shape
         out_height = 0
         out_width = 0
-        self.X = Param(X.copy())
+        self.X = X.copy()
 
-        out_height = height + 1 - self.filter_size + 2 * self.padding
-        out_width = width + 1 - self.filter_size + 2 * self.padding
+        out_height = int(np.floor(height + 2 * self.padding - self.filter_size)/self.stride + 1)
+        out_width = int(np.floor(width + 2 * self.padding - self.filter_size)/self.stride + 1)
 
         # TODO: Implement forward pass
         # Hint: setup variables that hold the result
@@ -243,8 +261,8 @@ class ConvolutionalLayer:
 
         out = np.zeros([batch_size, out_height, out_width, self.out_channels])
 
-        self.X.value = np.pad(
-            array=self.X.value,
+        self.X = np.pad(
+            array=self.X,
             pad_width=((0, 0), (self.padding, self.padding), (self.padding, self.padding), (0, 0)),
             mode='constant'
         )
@@ -252,15 +270,54 @@ class ConvolutionalLayer:
         # It's ok to use loops for going over width and height
         # but try to avoid having any other loops
         slice_W = self.W.value.reshape(-1, self.out_channels)
-        for y in range(0, out_height, self.stride):
-            for x in range(0, out_width, self.stride):
+        if np.isnan(slice_W).sum() > 0:
+            print(slice_W.shape, 'slice_W conv')
+            
+        # print(self.W.value.shape, slice_W.shape)
+        for y in range(0, out_height):
+            for x in range(0, out_width):
                 # TODO: Implement forward pass for specific location
-                slice_X = self.X.value[:, y:y + self.filter_size, x:x + self.filter_size, :] \
+                slice_X = self.X[:, y*self.stride:y*self.stride + self.filter_size, \
+                                       x*self.stride:x*self.stride + self.filter_size, :] \
                     .reshape(batch_size, -1)
 
+                # out[:, y, x, :] = slice_X.dot(slice_W) + self.B.value
                 out[:, y, x, :] = slice_X.dot(slice_W) + self.B.value
+                
+                if np.isinf(slice_X).sum()>0:
+                    print('slice_x', slice_X.shape)
+                if np.isinf(slice_W).sum()>0:
+                    print('slice_w', slice_W.shape)
+                
+                
+                
+                # if np.isinf(slice_X.dot(slice_W)).sum()>0:
+                #     print(np.isnan(slice_X.dot(slice_W)).sum())
+                #     print('dot', slice_X.dot(slice_W).shape)
+                #     print('sl_w', slice_W.shape)
+                #     print('sl_x', slice_X.shape)
+
+                if np.isnan(self.B.value).sum()>0:
+                    print('B', B.shape)
+                
+#                 slice_X = self.X.value[:, y*self.stride:y*self.stride + self.filter_size, \
+#                                        x*self.stride:x*self.stride + self.filter_size, :] 
+# #                     .reshape(batch_size, -1)
+
+#                 print(slice_X.shape, self.W.value[np.newaxis, :, :, :].shape)
+#                 print((slice_X * self.W.value[np.newaxis, :, :, :]).shape)
+                      
+                      
+#                 out[:, y, x, :] = np.sum(
+#                     slice_X * self.W.value[np.newaxis, :, :, :],
+#                     axis=(1, 2)
+#                 )
+#                 # print(out.shape)
                 pass
+        
         # raise Exception("Not implemented!")
+        if np.isnan(out).sum() > 0:
+            print(out.shape, 'out conv')
         return out
 
     def backward(self, d_out):
@@ -269,7 +326,7 @@ class ConvolutionalLayer:
         # when you implemented FullyConnectedLayer
         # Just do it the same number of times and accumulate gradients
 
-        batch_size, height, width, channels = self.X.value.shape
+        batch_size, height, width, channels = self.X.shape
         _, out_height, out_width, out_channels = d_out.shape
 
         # TODO: Implement backward pass
@@ -278,7 +335,7 @@ class ConvolutionalLayer:
         # of the output
 
         slice_W = self.W.value.reshape(-1, self.out_channels)
-        grad_X = np.zeros_like(self.X.value)
+        grad_X = np.zeros_like(self.X)
 
         # Try to avoid having any other loops here too
         for y in range(out_height):
@@ -287,7 +344,7 @@ class ConvolutionalLayer:
                 # Aggregate gradients for both the input and
                 # the parameters (W and B)
 
-                slice_X = self.X.value[:, y:y + self.filter_size, x:x + self.filter_size, :] \
+                slice_X = self.X[:, y*self.stride:y*self.stride + self.filter_size, x*self.stride:x*self.stride + self.filter_size, :] \
                     .reshape(batch_size, -1)
 
                 self.W.grad += np.dot(slice_X.T, d_out[:, y, x, :]).reshape((self.filter_size, self.filter_size,
@@ -295,7 +352,7 @@ class ConvolutionalLayer:
 
                 self.B.grad += np.sum(d_out[:, y, x, :], axis=0)
 
-                grad_X[:, y:y + self.filter_size, x:x + self.filter_size, :] += np.dot(d_out[:, y, x, :], slice_W.T) \
+                grad_X[:, y*self.stride:y*self.stride + self.filter_size, x*self.stride:x*self.stride + self.filter_size, :] += np.dot(d_out[:, y, x, :], slice_W.T) \
                     .reshape((batch_size, self.filter_size, self.filter_size, self.in_channels))
 
                 pass
@@ -318,6 +375,7 @@ class MaxPoolingLayer:
         self.pool_size = pool_size
         self.stride = stride
         self.X = None
+        self.name = 'maxpooling'
 
     def forward(self, X):
         batch_size, height, width, channels = X.shape
@@ -373,6 +431,7 @@ class MaxPoolingLayer:
 class Flattener:
     def __init__(self):
         self.X_shape = None
+        self.name = 'flattener'
 
     def forward(self, X):
         batch_size, height, width, channels = X.shape
@@ -392,6 +451,7 @@ class Flattener:
 class DropoutLayer:
     def __init__(self, dropout_rate):
         self.dropout_rate = dropout_rate
+        self.name = 'dropout'
 
     def forward(self, X):
         self.mask = np.random.binomial(1,self.dropout_rate,size=X.shape) / self.dropout_rate
