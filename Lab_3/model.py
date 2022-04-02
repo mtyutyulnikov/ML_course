@@ -1,5 +1,7 @@
 import numpy as np
 import cupy as cp
+from time import time
+
 
 from layers import (
     FullyConnectedLayer, ReLULayer,
@@ -61,11 +63,11 @@ class ConvNet:
         self.layers.append(Flattener())
         self.layers.append(FullyConnectedLayer(256*6*6, 4096))
         self.layers.append(ReLULayer())
-        # self.layers.append(DropoutLayer(0.5))
+        self.layers.append(DropoutLayer(0.5))
 
         self.layers.append(FullyConnectedLayer(4096, 4096))
         self.layers.append(ReLULayer())
-        # self.layers.append(DropoutLayer(0.5))
+        self.layers.append(DropoutLayer(0.5))
         self.layers.append(FullyConnectedLayer(4096, n_output_classes))
 
 
@@ -84,18 +86,26 @@ class ConvNet:
 
 
     def forward(self, X):
+        
+        
+        print('FORWARD -------------------------------------------------------------------')
         for layer in self.layers:
+            start_time = time()
             # print('cur', X.shape)
             X = layer.forward(X)
+            print(f'{layer.name} time: {time() - start_time :.5f}')
             # if np.isnan(X).sum() > 0:
             #     print(X.shape, 'out nan', layer.name)
             # print('large forward', (np.abs(X) > 10**6).sum()/X.size, layer.name)
         return X
     
     def backward(self, grad):
+        print('BACKPROP ==================================================================')
         for layer in reversed(self.layers):
             # print(type(grad))
+            start_time = time()
             grad = layer.backward(grad)
+            print(f'{layer.name} time: {time() - start_time :.5f}')
             # print('large backprop', (np.abs(grad) > 10**6).sum()/grad.size, layer.name)
 
     def predict(self, X):

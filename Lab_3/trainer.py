@@ -2,7 +2,7 @@ import numpy as np
 from copy import deepcopy
 
 from metrics import multiclass_accuracy
-from layers import softmax, cross_entropy_loss, softmax_with_cross_entropy
+from layers import softmax, cross_entropy_loss, softmax_with_cross_entropy, cross_entropy_loss_cpu, softmax_cpu
 
 import cupy as cp
 from tqdm.notebook import tqdm
@@ -59,7 +59,7 @@ class Trainer:
         for param_name, param in params.items():
             self.optimizers[param_name] = deepcopy(self.optim)
 
-    def compute_accuracy(self, X, y):
+    def compute_accuracy_and_loss(self, X, y):
         '''
         Computes accuracy on provided data using mini-batches
         '''
@@ -69,15 +69,19 @@ class Trainer:
         batches_indices = np.array_split(indices, sections)
         
         pred = np.zeros_like(y)
+        probs = np.zeros((y.shape[0], 10))
         
         for batch_indices in batches_indices:
             batch_X = X[batch_indices]
-            batch_X_gpu = cp.asarray(batch_X)
+            batch_X_gpu = cp.asarray(batch_X.repeat(8, axis=1).repeat(8, axis=2))
 
-            pred_batch = self.model.predict(batch_X_gpu)
+            out_batch = self.model.forward(batch_X_gpu).get()
+            pred_batch = np.argmax(out_batch, axis=1)
             pred[batch_indices] = pred_batch
+            probs[batch_indices] = out_batch
+            
 
-        return multiclass_accuracy(pred, y)
+        return multiclass_accuracy(pred, y), cross_entropy_loss_cpu(softmax_cpu(probs), y)
         
     def fit(self):
         '''
@@ -104,7 +108,7 @@ class Trainer:
                 batch_X = self.dataset.train_X[batch_indices]
                 batch_y = self.dataset.train_y[batch_indices]
                 
-                batch_X_gpu = cp.asarray(batch_X)
+                batch_X_gpu = cp.asarray(batch_X.repeat(8, axis=1).repeat(8, axis=2))
 
                 # loss = self.model.compute_loss_and_gradients(batch_X, batch_y)
                 
@@ -130,15 +134,16 @@ class Trainer:
             self.learning_rate *= self.learning_rate_decay
             
             ave_loss = np.mean(batch_losses)
+            val_accuracy, val_loss = self.compute_accuracy_and_loss(self.dataset.val_X,self.dataset.val_y)
             
-            val_loss = -1 #cross_entropy_loss(softmax(self.model.forward(self.dataset.val_X)), self.dataset.val_y)
+            # val_loss = -1 #cross_entropy_loss(softmax(self.model.forward(self.dataset.val_X)), self.dataset.val_y)
             
             # train_accuracy = self.compute_accuracy(self.dataset.train_X,
             #                                        self.dataset.train_y)
             train_accuracy = correct/len(self.dataset.train_X)
 
-            val_accuracy = self.compute_accuracy(self.dataset.val_X,
-                                                 self.dataset.val_y)
+            # val_accuracy = self.compute_accuracy(self.dataset.val_X,
+            #                                      self.dataset.val_y)
 
             # print("Loss: %f, Train accuracy: %f, val accuracy: %f" % 
             #       (batch_losses[-1], train_accuracy, val_accuracy))
