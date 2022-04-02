@@ -9,11 +9,17 @@ from layers import (
     softmax_with_cross_entropy, l2_regularization, DropoutLayer
 )
 
+from metrics import multiclass_accuracy
+from layers import cross_entropy_loss_cpu, softmax_cpu
+from tqdm import tqdm
+
 
 class ConvNet:
     def __init__(self, input_shape, n_output_classes, conv1_channels, conv2_channels):
         # AlexNet wiki
         self.layers = []
+        self.training_mode = [True]
+
         
 #         self.layers.append(ConvolutionalLayer(1, 96, filter_size=11, stride=4))
 #         self.layers.append(ReLULayer())
@@ -63,11 +69,11 @@ class ConvNet:
         self.layers.append(Flattener())
         self.layers.append(FullyConnectedLayer(256*6*6, 4096))
         self.layers.append(ReLULayer())
-        self.layers.append(DropoutLayer(0.5))
+        self.layers.append(DropoutLayer(0.5, self.training_mode))
 
         self.layers.append(FullyConnectedLayer(4096, 4096))
         self.layers.append(ReLULayer())
-        self.layers.append(DropoutLayer(0.5))
+        self.layers.append(DropoutLayer(0.5, self.training_mode))
         self.layers.append(FullyConnectedLayer(4096, n_output_classes))
 
 
@@ -82,38 +88,68 @@ class ConvNet:
 
 #         self.layers.append(Flattener())
 #         self.layers.append(FullyConnectedLayer(7840, n_output_classes))
-        
 
 
     def forward(self, X):
         
         
-        print('FORWARD -------------------------------------------------------------------')
+        # print('FORWARD -------------------------------------------------------------------')
+        # start_time = time()
+
         for layer in self.layers:
-            start_time = time()
+            s = time()
+
             # print('cur', X.shape)
             X = layer.forward(X)
-            print(f'{layer.name} time: {time() - start_time :.5f}')
+            # print(f'{layer.name} time: {time() - s :.5f}')
+        # print(f'FORWARD time: {time() - start_time :.5f} -------------------------------------------')
             # if np.isnan(X).sum() > 0:
             #     print(X.shape, 'out nan', layer.name)
             # print('large forward', (np.abs(X) > 10**6).sum()/X.size, layer.name)
         return X
     
     def backward(self, grad):
-        print('BACKPROP ==================================================================')
+        # print('BACKPROP ==================================================================')
+        # start_time = time()
+
         for layer in reversed(self.layers):
+            s = time()
+
             # print(type(grad))
-            start_time = time()
             grad = layer.backward(grad)
-            print(f'{layer.name} time: {time() - start_time :.5f}')
+            # print(f'{layer.name} time: {time() - s :.5f}')
+        # print(f'BACKPROP time: {time() - start_time :.5f} ========================================================')
             # print('large backprop', (np.abs(grad) > 10**6).sum()/grad.size, layer.name)
 
-    def predict(self, X):
-        # You can probably copy the code from previous assignment
-        for layer in self.layers:
-            X = layer.forward(X)
-        pred = cp.argmax(X, axis=1).get()
-        return pred
+    # def predict(self, X):
+        # # You can probably copy the code from previous assignment
+        # for layer in self.layers:
+        #     X = layer.forward(X)
+        # pred = cp.argmax(X, axis=1).get()
+        # return pred
+        
+    def predict_accuracy(self, X, y, batch_size):
+        self.model.training_mode[0] = False
+        indices = np.arange(X.shape[0])
+
+        sections = np.arange(batch_size, X.shape[0], batch_size)
+        batches_indices = np.array_split(indices, sections)
+        
+        pred = np.zeros_like(y)
+        probs = np.zeros((y.shape[0], 10))
+        
+        for batch_indices in tqdm(batches_indices):
+            batch_X = X[batch_indices]
+            batch_X_gpu = cp.asarray(batch_X.repeat(8, axis=1).repeat(8, axis=2))
+
+            # print(batch_X.shape)
+            out_batch = self.forward(batch_X_gpu).get()
+            pred_batch = np.argmax(out_batch, axis=1)
+            pred[batch_indices] = pred_batch
+            probs[batch_indices] = out_batch
+            
+
+        return multiclass_accuracy(pred, y) , cross_entropy_loss_cpu(softmax_cpu(probs), y)
 
     def params(self):
         result = {}
@@ -122,6 +158,10 @@ class ConvNet:
         # which have parameters
         for layer_num, layer in enumerate(self.layers):
             for param_name, param in layer.params().items():
-                result[param_name + '_' + str(layer_num)] = param
+                result[f'{param_name} {layer.name}_{layer_num}'] = param
 
         return result
+    
+    def load_params(self, folder):
+        for param_name, param in self.params().items():
+            param.value = cp.load(f'{folder}/{param_name}.npy')

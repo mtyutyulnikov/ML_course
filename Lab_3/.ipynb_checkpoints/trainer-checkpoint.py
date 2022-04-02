@@ -7,6 +7,8 @@ from layers import softmax, cross_entropy_loss, softmax_with_cross_entropy, cros
 import cupy as cp
 from tqdm.notebook import tqdm
 
+from time import time
+import os
 
 class Dataset:
     ''' 
@@ -95,45 +97,67 @@ class Trainer:
         loss_history = []
         train_acc_history = []
         val_acc_history = []
-        
+        best_val_loss = 9999999
+        mempool = cp.get_default_memory_pool()
         for epoch in range(self.num_epochs):
+            start_time = time()
             shuffled_indices = np.arange(num_train)
             np.random.shuffle(shuffled_indices)
             sections = np.arange(self.batch_size, num_train, self.batch_size)
             batches_indices = np.array_split(shuffled_indices, sections)
 
-            batch_losses = []
+            batch_losses = cp.zeros(len(batches_indices))
             correct = 0
-            for batch_indices in tqdm(batches_indices):
+            self.model.training_mode[0] = True
+            for batches_id, batch_indices in tqdm(enumerate(batches_indices)):
+                s=time()
+
                 batch_X = self.dataset.train_X[batch_indices]
                 batch_y = self.dataset.train_y[batch_indices]
+                batch_y_gpu = cp.asarray(batch_y)
                 
                 batch_X_gpu = cp.asarray(batch_X.repeat(8, axis=1).repeat(8, axis=2))
-
                 # loss = self.model.compute_loss_and_gradients(batch_X, batch_y)
-                
+                # print('1', time()-s)
+
                 for param in self.model.params().values():
-                    param.grad = 0
-                    
+                    param.grad.fill(0)
+                # print('2', time()-s)
+
                 out = self.model.forward(batch_X_gpu)
+                # print('3', time()-s)
 
                 loss, grad = softmax_with_cross_entropy(out, batch_y)
+                # print('4', time()-s)
 
                 self.model.backward(grad)
-                
-                prediction = cp.argmax(out, axis=1).get()
-                correct += np.sum(prediction == batch_y)
-                
-                
-                for param_name, param in self.model.params().items():
-                    optimizer = self.optimizers[param_name]
-                    param.value = optimizer.update(param.value, param.grad, self.learning_rate)
+                # print('5', time()-s)
 
-                batch_losses.append(loss)
+
+                prediction = cp.argmax(out, axis=1)
+                correct += cp.sum(prediction == batch_y_gpu)
+                # print('6', time()-s)
+
+                for param_name, param in self.model.params().items():
+                    # s = time()
+                    optimizer = self.optimizers[param_name]
+                    optimizer.update(param.value, param.grad, self.learning_rate)
+                    # print(param_name, time()-s)
+
+                
+                # batch_losses.append(loss.get())
+                batch_losses[batches_id] = loss
+                # print('7 fin', time()-s)
+                mempool.free_all_blocks()
+
+
+                
+            correct = correct.get()
 
             self.learning_rate *= self.learning_rate_decay
             
-            ave_loss = np.mean(batch_losses)
+            ave_loss = np.mean(batch_losses.get())
+            self.model.training_mode[0] = False
             val_accuracy, val_loss = self.compute_accuracy_and_loss(self.dataset.val_X,self.dataset.val_y)
             
             # val_loss = -1 #cross_entropy_loss(softmax(self.model.forward(self.dataset.val_X)), self.dataset.val_y)
@@ -147,7 +171,14 @@ class Trainer:
 
             # print("Loss: %f, Train accuracy: %f, val accuracy: %f" % 
             #       (batch_losses[-1], train_accuracy, val_accuracy))
-            print(f'Epoch {epoch+1}  Train loss: {batch_losses[-1]:.5f}, Train accuracy: {train_accuracy:.5f}, Val loss: {val_loss:.5f}, val accuracy: {val_accuracy:.5f}')
+            print(f'Epoch {epoch+1}  Train loss: {batch_losses[-1]:.5f}, Train accuracy: {train_accuracy:.5f}, Val loss: {val_loss:.5f}, val accuracy: {val_accuracy:.5f}, time: {time() - start_time}')
+            
+            # os.mkdir(f'model_{epoch+1}')
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                print(f'New best val loss: {val_loss}')
+                for param_name, param in self.model.params().items():
+                    cp.save(f'best_model/{param_name}.npy', param.value)
 
             loss_history.append(ave_loss)
             train_acc_history.append(train_accuracy)
