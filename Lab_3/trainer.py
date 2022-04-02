@@ -7,6 +7,8 @@ from layers import softmax, cross_entropy_loss, softmax_with_cross_entropy, cros
 import cupy as cp
 from tqdm.notebook import tqdm
 
+from time import time
+
 
 class Dataset:
     ''' 
@@ -97,6 +99,7 @@ class Trainer:
         val_acc_history = []
         
         for epoch in range(self.num_epochs):
+            start_time = time()
             shuffled_indices = np.arange(num_train)
             np.random.shuffle(shuffled_indices)
             sections = np.arange(self.batch_size, num_train, self.batch_size)
@@ -105,31 +108,44 @@ class Trainer:
             batch_losses = []
             correct = 0
             for batch_indices in tqdm(batches_indices):
+                # s=time()
+
                 batch_X = self.dataset.train_X[batch_indices]
                 batch_y = self.dataset.train_y[batch_indices]
+                batch_y_gpu = cp.asarray(batch_y)
                 
                 batch_X_gpu = cp.asarray(batch_X.repeat(8, axis=1).repeat(8, axis=2))
-
                 # loss = self.model.compute_loss_and_gradients(batch_X, batch_y)
-                
+                # print('1', time()-s)
+
                 for param in self.model.params().values():
-                    param.grad = 0
-                    
+                    param.grad.fill(0)
+                # print('2.0', time()-s)
+
                 out = self.model.forward(batch_X_gpu)
+                # print('2.1', time()-s)
 
                 loss, grad = softmax_with_cross_entropy(out, batch_y)
+                # print('3', time()-s)
 
                 self.model.backward(grad)
-                
-                prediction = cp.argmax(out, axis=1).get()
-                correct += np.sum(prediction == batch_y)
-                
-                
-                for param_name, param in self.model.params().items():
-                    optimizer = self.optimizers[param_name]
-                    param.value = optimizer.update(param.value, param.grad, self.learning_rate)
+                # print('4', time()-s)
 
-                batch_losses.append(loss)
+
+                prediction = cp.argmax(out, axis=1)
+                correct += cp.sum(prediction == batch_y_gpu)
+                # print('5', time()-s)
+
+                for param_name, param in self.model.params().items():
+                    # print(param_name)
+                    optimizer = self.optimizers[param_name]
+                    optimizer.update(param.value, param.grad, self.learning_rate)
+
+                batch_losses.append(loss.get())
+                # print('6 fin', time()-s)
+
+                
+            correct = correct.get()
 
             self.learning_rate *= self.learning_rate_decay
             
@@ -147,7 +163,7 @@ class Trainer:
 
             # print("Loss: %f, Train accuracy: %f, val accuracy: %f" % 
             #       (batch_losses[-1], train_accuracy, val_accuracy))
-            print(f'Epoch {epoch+1}  Train loss: {batch_losses[-1]:.5f}, Train accuracy: {train_accuracy:.5f}, Val loss: {val_loss:.5f}, val accuracy: {val_accuracy:.5f}')
+            print(f'Epoch {epoch+1}  Train loss: {batch_losses[-1]:.5f}, Train accuracy: {train_accuracy:.5f}, Val loss: {val_loss:.5f}, val accuracy: {val_accuracy:.5f}, time: {time() - start_time}')
 
             loss_history.append(ave_loss)
             train_acc_history.append(train_accuracy)

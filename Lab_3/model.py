@@ -88,24 +88,32 @@ class ConvNet:
     def forward(self, X):
         
         
-        print('FORWARD -------------------------------------------------------------------')
+        # print('FORWARD -------------------------------------------------------------------')
+        # start_time = time()
+
         for layer in self.layers:
-            start_time = time()
+            # s = time()
+
             # print('cur', X.shape)
             X = layer.forward(X)
-            print(f'{layer.name} time: {time() - start_time :.5f}')
+        #     print(f'{layer.name} time: {time() - s :.5f}')
+        # print(f'FORWARD time: {time() - start_time :.5f} -------------------------------------------')
             # if np.isnan(X).sum() > 0:
             #     print(X.shape, 'out nan', layer.name)
             # print('large forward', (np.abs(X) > 10**6).sum()/X.size, layer.name)
         return X
     
     def backward(self, grad):
-        print('BACKPROP ==================================================================')
+        # print('BACKPROP ==================================================================')
+        # start_time = time()
+
         for layer in reversed(self.layers):
+            # s = time()
+
             # print(type(grad))
-            start_time = time()
             grad = layer.backward(grad)
-            print(f'{layer.name} time: {time() - start_time :.5f}')
+        #     print(f'{layer.name} time: {time() - s :.5f}')
+        # print(f'BACKPROP time: {time() - start_time :.5f} ========================================================')
             # print('large backprop', (np.abs(grad) > 10**6).sum()/grad.size, layer.name)
 
     def predict(self, X):
@@ -122,6 +130,6 @@ class ConvNet:
         # which have parameters
         for layer_num, layer in enumerate(self.layers):
             for param_name, param in layer.params().items():
-                result[param_name + '_' + str(layer_num)] = param
+                result[f'{param_name} {layer.name}_{layer_num}'] = param
 
         return result

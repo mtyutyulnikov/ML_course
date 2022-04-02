@@ -1,5 +1,6 @@
 import numpy as np
 import cupy as cp
+from time import time
 
 class SGD:
     """
@@ -54,22 +55,52 @@ class Adam():
     def __init__(self, beta_1=0.9, beta_2=0.999, epsilon = 1e-8):
         self.beta_1 = beta_1
         self.beta_2 = beta_2
-        self.epsilon = epsilon
+        self.epsilon = cp.array(epsilon).astype(np.float32)
         
         self.t = 1
         self.v = 0
         self.s = 0
         
+        self.sqrt_res = None
         
+        
+    
     def update(self, weights, grad, learning_rate):
+        
+        kernel_update = cp.RawKernel(r'''
+             extern "C" __global__
+             void adam_update(float* weights, const int N, const float* learning_rate, 
+                                 const float* v_bias_corr, const float* s_bias_corr,  const float* epsilon) {
+                 int tid = blockDim.x * blockIdx.x + threadIdx.x;
+                
+                 if (tid < N){
+                     weights[tid] -= learning_rate[0]*v_bias_corr[tid] / (sqrt(s_bias_corr[tid]) + epsilon[0]);
+                 }
+             }
+             ''', 'adam_update')
+        
+        
         self.v = self.beta_1 * self.v + (1 - self.beta_1) * grad
         self.s = self.beta_2 * self.s + (1 - self.beta_2) * cp.square(grad)
-
+        
         v_bias_corr = self.v / (1 - self.beta_1 ** self.t)
         s_bias_corr = self.s / (1 - self.beta_2 ** self.t)
-        weights -= learning_rate * v_bias_corr / (cp.sqrt(s_bias_corr)+ self.epsilon)
+        
+        
+        # print('LEN W', len(weights.flatten()))
+        # print(weights.dtype, v_bias_corr.dtype, s_bias_corr.dtype)
+        
+        # w = weights.copy()
+        
+        learning_rate = cp.array(learning_rate).astype(np.float32)
+        kernel_update((len(weights.flatten())//1024+1,),(1024,), \
+                      (weights, len(weights.flatten()), learning_rate, v_bias_corr, s_bias_corr, self.epsilon))
+        
+        
+        # w -= learning_rate * v_bias_corr / (cp.sqrt(s_bias_corr)+ self.epsilon)
+        # print(w-weights)
+
         self.t+=1
         
-        return weights
         
 
